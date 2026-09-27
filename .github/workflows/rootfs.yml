@@ -71,9 +71,18 @@ jobs:
           make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
           echo "=== CONFIG_ARCH_QCOM ==="
           grep "^CONFIG_ARCH_QCOM=" .config || true
-          make -j"$(nproc)" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- Image.gz dtbs modules
-          make -j"$(nproc)" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- sm8475-xiaomi-liuqin.dtb
-          test -f arch/arm64/boot/dts/qcom/sm8475-xiaomi-liuqin.dtb
+          echo "=== CHECK LIUQIN DTB SOURCE ==="
+          grep -n "sm8475-xiaomi-liuqin" arch/arm64/boot/dts/qcom/Makefile || true
+          test -f arch/arm64/boot/dts/qcom/sm8475-xiaomi-liuqin.dts
+          echo "=== CHECK ARCH_QCOM ==="
+          grep "^CONFIG_ARCH_QCOM=" .config || true
+          echo "=== CHECK DTS ==="
+          ls -l arch/arm64/boot/dts/qcom/sm8475-xiaomi-liuqin.dts
+          echo "=== CHECK MAKEFILE ==="
+          grep -n "sm8475" arch/arm64/boot/dts/qcom/Makefile | tail -20 || true
+          make -j"$(nproc)" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- Image.gz modules
+          echo "=== BUILD DTB DIRECTLY ==="
+          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- -C arch/arm64/boot/dts/qcom sm8475-xiaomi-liuqin.dtb
           make -j"$(nproc)" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- modules_install INSTALL_MOD_PATH="$GITHUB_WORKSPACE/out/modules"
           mkdir -p "$GITHUB_WORKSPACE/out/boot-files"
           cp arch/arm64/boot/Image.gz "$GITHUB_WORKSPACE/out/boot-files/"
