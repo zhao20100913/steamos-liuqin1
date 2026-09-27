@@ -74,7 +74,23 @@ jobs:
           echo "=== CHECK LIUQIN DTB SOURCE ==="
           sed -i -E 's/^([[:space:]]*)dtb-\$\(CONFIG_ARCH_QCOM\)([[:space:]]*\+=.*sm8475-xiaomi-liuqin\.dtb.*)$/\1dtb-y\2/' arch/arm64/boot/dts/qcom/Makefile
                   echo "=== liuqin DTB Makefile rule ==="
-                  grep -n "sm8475-xiaomi-liuqin" arch/arm64/boot/dts/qcom/Makefile || true
+                  python3 - <<'PY2'
+from pathlib import Path
+
+p = Path("arch/arm64/boot/dts/qcom/Makefile")
+lines = p.read_text().splitlines()
+
+lines = [x for x in lines if "sm8475-xiaomi-liuqin.dtb" not in x]
+lines.append("dtb-y += sm8475-xiaomi-liuqin.dtb")
+
+p.write_text("\n".join(lines) + "\n")
+
+print("=== FORCE DTB RULE ===")
+print("dtb-y += sm8475-xiaomi-liuqin.dtb")
+PY2
+
+echo "=== CHECK DTB RULE ==="
+grep -n "sm8475-xiaomi-liuqin" arch/arm64/boot/dts/qcom/Makefile || true
           test -f arch/arm64/boot/dts/qcom/sm8475-xiaomi-liuqin.dts
           echo "=== CHECK ARCH_QCOM ==="
           grep "^CONFIG_ARCH_QCOM=" .config || true
