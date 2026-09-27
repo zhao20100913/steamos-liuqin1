@@ -1,0 +1,142 @@
+name: Build SteamOS for liuqin
+
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_repository:
+        description: 'liuqin kernel repository (owner/name)'
+        required: true
+        type: string
+        default: 'sm8450-mainline/linux'
+      kernel_ref:
+        description: 'Kernel branch/tag/commit'
+        required: true
+        type: string
+        default: 'liuqin-6.17'
+      rootfs_size:
+        description: 'Minimum rootfs image size'
+        required: false
+        type: string
+        default: '8G'
+      boot_partition_label:
+        description: 'PARTLABEL used by /etc/fstab'
+        required: true
+        type: string
+        default: 'linux'
+      firmware_archive_url:
+        description: 'Optional URL to a tar(.zst/.xz/.gz) containing lib/firmware or firmware files'
+        required: false
+        type: string
+        default: ''
+      build_kernel:
+        description: 'Build the liuqin 6.17 kernel'
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 360
+    env:
+      WORK: /mnt/frame-work
+      ROOTFS_MOUNT: /mnt/rootfs
+    steps:
+      - name: Checkout builder
+        uses: actions/checkout@v4
+
+      - name: Checkout liuqin kernel
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.kernel_repository }}
+          ref: ${{ inputs.kernel_ref }}
+          path: kernel
+          persist-credentials: false
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq curl bzip2 zstd xz-utils e2fsprogs rsync util-linux btrfs-progs bc flex bison libssl-dev libelf-dev dwarves device-tree-compiler cpio kmod gcc-aarch64-linux-gnu
+
+      - name: Build kernel and DTB
+        if: ${{ inputs.build_kernel }}
+        run: |
+          set -euo pipefail
+          cd kernel
+          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- sm8450.config
+          make -j"$(nproc)" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- Image.gz dtbs modules
+          make -j"$(nproc)" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- modules_install INSTALL_MOD_PATH="$GITHUB_WORKSPACE/out/modules"
+          mkdir -p "$GITHUB_WORKSPACE/out/boot-files"
+          cp arch/arm64/boot/Image.gz "$GITHUB_WORKSPACE/out/boot-files/"
+          cp arch/arm64/boot/dts/qcom/sm8475-xiaomi-liuqin.dtb "$GITHUB_WORKSPACE/out/boot-files/"
+          cp System.map "$GITHUB_WORKSPACE/out/boot-files/" || true
+          cp .config "$GITHUB_WORKSPACE/out/boot-files/kernel.config"
+
+      - name: Fetch Steam Frame rootfs
+        run: |
+          chmod +x scripts/host/00-fetch-frame-rootfs.sh
+          sudo env WORK="$WORK" OUT="$WORK/out" bash scripts/host/00-fetch-frame-rootfs.sh
+
+      - name: Lay userspace into rootfs image
+        run: |
+          mkdir -p pkgs
+          chmod +x scripts/host/01-lay-rootfs.sh
+          sudo bash scripts/host/01-lay-rootfs.sh "$WORK/out/rootfs.frame" rootfs.img '${{ inputs.rootfs_size }}'
+
+      - name: Inject liuqin kernel, modules and firmware
+        env:
+          FIRMWARE_URL: ${{ inputs.firmware_archive_url }}
+        run: |
+          set -euo pipefail
+          sudo mkdir -p "$ROOTFS_MOUNT"
+          sudo mount -o loop rootfs.img "$ROOTFS_MOUNT"
+          trap 'sudo umount -R "$ROOTFS_MOUNT" 2>/dev/null || true' EXIT
+          sudo rm -rf "$ROOTFS_MOUNT/boot"/* "$ROOTFS_MOUNT/usr/lib/modules"/* 2>/dev/null || true
+          sudo mkdir -p "$ROOTFS_MOUNT/boot" "$ROOTFS_MOUNT/usr/lib/modules"
+          sudo cp -a out/boot-files/Image.gz "$ROOTFS_MOUNT/boot/"
+          sudo cp -a out/boot-files/sm8475-xiaomi-liuqin.dtb "$ROOTFS_MOUNT/boot/"
+          sudo cp -a out/modules/lib/modules/. "$ROOTFS_MOUNT/usr/lib/modules/" 2>/dev/null || true
+
+          if [[ -n "$FIRMWARE_URL" ]]; then
+            tmp=/tmp/liuqin-firmware
+            rm -rf "$tmp"; mkdir -p "$tmp"
+            curl -fL --retry 3 "$FIRMWARE_URL" -o /tmp/firmware.tar
+            file /tmp/firmware.tar || true
+            tar -xf /tmp/firmware.tar -C "$tmp" || tar --zstd -xf /tmp/firmware.tar -C "$tmp" || tar -Jxf /tmp/firmware.tar -C "$tmp"
+            sudo mkdir -p "$ROOTFS_MOUNT/lib/firmware"
+            if [[ -d "$tmp/lib/firmware" ]]; then sudo cp -a "$tmp/lib/firmware/." "$ROOTFS_MOUNT/lib/firmware/"; else sudo cp -a "$tmp/." "$ROOTFS_MOUNT/lib/firmware/"; fi
+          fi
+
+          sudo mkdir -p "$ROOTFS_MOUNT/tmp/pkgs"
+          sudo cp scripts/in-chroot/10-graft.sh "$ROOTFS_MOUNT/root/10-graft.sh"
+          sudo chmod +x "$ROOTFS_MOUNT/root/10-graft.sh"
+          sudo mount --bind /dev "$ROOTFS_MOUNT/dev"
+          sudo mount --bind /dev/pts "$ROOTFS_MOUNT/dev/pts" || true
+          sudo mount -t proc proc "$ROOTFS_MOUNT/proc"
+          sudo mount -t sysfs sys "$ROOTFS_MOUNT/sys"
+          sudo rm -f "$ROOTFS_MOUNT/etc/resolv.conf"
+          sudo cp /etc/resolv.conf "$ROOTFS_MOUNT/etc/resolv.conf" || true
+          sudo chroot "$ROOTFS_MOUNT" env PARTLABEL='${{ inputs.boot_partition_label }}' /root/10-graft.sh
+
+          echo '--- required liuqin firmware references ---'
+          grep -RhoE 'firmware-name = "[^"]+"' kernel/arch/arm64/boot/dts/qcom/sm8475-xiaomi-liuqin.dts | sed 's/.*"//;s/".*//' | sort -u
+          for f in qcom/sm8475/liuqin/a730_zap.mbn qcom/sm8475/liuqin/adsp.mbn qcom/sm8475/liuqin/cdsp.mbn qcom/sm8475/liuqin/slpi.mbn novatek/liuqin/novatek_nt36532_m81_fw_csot.bin; do
+            [[ -e "$ROOTFS_MOUNT/lib/firmware/$f" ]] || echo "MISSING: $f"
+          done
+
+      - name: Finalize rootfs
+        if: always()
+        run: |
+          chmod +x scripts/host/03-finalize-image.sh
+          sudo env SHRINK_IMAGE=true bash scripts/host/03-finalize-image.sh rootfs.img "$ROOTFS_MOUNT"
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: steamos-liuqin-mainline
+          path: |
+            rootfs.img
+            out/boot-files/*

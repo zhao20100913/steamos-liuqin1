@@ -1,0 +1,28 @@
+name: Publish Steam Frame rootfs base
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag for the cached Frame rootfs base'
+        required: true
+        type: string
+        default: 'frame-base-20260922'
+      frame_image_url:
+        description: 'Official Steam Frame recovery image URL'
+        required: true
+        type: string
+        default: 'https://steamdeck-images.steamos.cloud/recovery/steamframe-repair-latest.img.bz2'
+permissions:
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq curl gh bzip2 zstd xz-utils e2fsprogs rsync util-linux p7zip-full btrfs-progs python3
+      - name: Extract and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          chmod +x scripts/host/*.sh
+          sudo env GH_TOKEN="$GH_TOKEN" TAG='${{ inputs.tag }}' WORK=/mnt/frame-work OUT=/mnt/frame-work/out FRAME_IMAGE_URL='${{ inputs.frame_image_url }}' bash scripts/host/00b-publish-base.sh
