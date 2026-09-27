@@ -7,7 +7,7 @@ on:
         description: 'liuqin kernel repository (owner/name)'
         required: true
         type: string
-        default: 'sm8450-mainline/linux'
+        default: 'yzddmr6/linux-sm8450-liuqin'
       kernel_ref:
         description: 'Kernel branch/tag/commit'
         required: true
