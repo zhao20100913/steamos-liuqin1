@@ -67,6 +67,10 @@ jobs:
           set -euo pipefail
           cd kernel
           make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- sm8450.config
+          ./scripts/config --enable ARCH_QCOM
+          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
+          echo "=== CONFIG_ARCH_QCOM ==="
+          grep "^CONFIG_ARCH_QCOM=" .config || true
           make -j"$(nproc)" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- Image.gz dtbs modules
           make -j"$(nproc)" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- sm8475-xiaomi-liuqin.dtb
           test -f arch/arm64/boot/dts/qcom/sm8475-xiaomi-liuqin.dtb
